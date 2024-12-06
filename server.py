@@ -21,6 +21,9 @@ class ActiveClient:
         self._client.sendall(message.encode("utf8"))
         return await self._loop.sock_recv(self._client, 8192)
 
+    def __hash__(self) -> int:
+        return hash(self._username)
+
     def __eq__(self, other: "ActiveClient") -> bool:
         return self._username == other._username
 
@@ -52,7 +55,12 @@ class Coordinator:
             await ac.send_message("Registered\n")
 
         elif request.startswith("open"):
-            print()
+            if len(self._clients) < 2:
+                response = b"No other clients\n"
+            else:
+                # TODO: Implement message sending
+                pass
+
         else:
             response = b"Invalid command\n"
 
