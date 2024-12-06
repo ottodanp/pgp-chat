@@ -39,5 +39,5 @@ async def main():
     await chat.register("Alice")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     asyncio.run(main())
