@@ -1,85 +1,127 @@
 import asyncio
-import socket
-from typing import Tuple, List
+from typing import List, Optional, Dict, Any
 
-from db import DbHandler
+from quart import Quart, request
+
+
+class ClientAlreadyExists(Exception):
+    def __init__(self):
+        super().__init__("Client already exists in swarm")
+
+
+class MissingField(Exception):
+    _message: str
+
+    def __init__(self, message: str):
+        self._message = message
+        super().__init__(message)
+
+    @property
+    def message(self) -> str:
+        return self._message
 
 
 class ActiveClient:
-    _remote_address: Tuple[str, int]
-    _client: socket.socket
-    _username: str
+    _remote_address: str
+    _public_key: str
     _loop: asyncio.AbstractEventLoop
 
-    def __init__(self, remote_address: Tuple[str, int], client: socket.socket, username: str):
+    def __init__(self, remote_address: str, public_key: str):
         self._remote_address = remote_address
-        self._client = client
-        self._username = username
-        self._loop = asyncio.get_event_loop()
-
-    async def send_message(self, message: str) -> bytes:
-        self._client.sendall(message.encode("utf8"))
-        return await self._loop.sock_recv(self._client, 8192)
+        self._public_key = public_key
 
     def __hash__(self) -> int:
-        return hash(self._username)
+        return hash(self._public_key)
 
-    def __eq__(self, other: "ActiveClient") -> bool:
-        return self._username == other._username
+    @property
+    def public_key(self) -> str:
+        return self._public_key
 
-
-class Coordinator:
-    _bind_address = ("localhost", 15555)
-    _clients: List[ActiveClient] = []
-    _server: socket.socket
-    _loop: asyncio.AbstractEventLoop
-    _db_handler: DbHandler
-
-    def __init__(self, db_name: str = "coordinator.db"):
-        self._server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._server.bind(self._bind_address)
-        self._server.setblocking(False)
-        self._loop = asyncio.get_event_loop()
-        self._db_handler = DbHandler(db_name)
-        self._db_handler.up()
-
-    async def handle_client(self, client: socket.socket):
-        remote_address = client.getpeername()
-        response = b""
-        request = (await self._loop.sock_recv(client, 8192)).decode('utf8')
-        if request.startswith("register"):
-            print(request)
-            _, username, public_key = request.split("::")
-            ac = ActiveClient(remote_address, client, username)
-            self._clients.append(ac)
-            await ac.send_message("Registered\n")
-
-        elif request.startswith("open"):
-            if len(self._clients) < 2:
-                response = b"No other clients\n"
-            else:
-                # TODO: Implement message sending
-                pass
-
-        else:
-            response = b"Invalid command\n"
-
-        await self._loop.sock_sendall(client, response)
-
-        client.close()
-
-    async def run_server(self):
-        self._server.listen(8)
-
-        while True:
-            client, _ = await self._loop.sock_accept(self._server)
-            await self._loop.create_task(self.handle_client(client))
+    @property
+    def remote_address(self) -> str:
+        return self._remote_address
 
 
-async def main():
-    c = Coordinator()
-    await c.run_server()
+class ClientList:
+    _clients: Dict[int, ActiveClient]
+
+    def __init__(self):
+        self._clients = {}
+
+    def add_client(self, client: ActiveClient):
+        if self.search_for_client(client.public_key) is not None:
+            raise ClientAlreadyExists()
+
+        self._append(client)
+
+    def search_for_client(self, public_key: str) -> Optional[ActiveClient]:
+        return self._clients.get(hash(public_key))
+
+    def _append(self, client: ActiveClient):
+        self._clients[hash(client)] = client
+
+    def __iter__(self) -> ActiveClient:
+        for pkey_hash, client in self._clients:
+            yield client
+
+
+class Coordinator(Quart):
+    _active_clients: ClientList
+
+    def __init__(self, app_name: str):
+        super().__init__(app_name)
+
+    async def join(self):
+        post_body = await request.json
+        try:
+            values = self.search_body(post_body, ["public_key"])
+            public_key = values[0]
+        except MissingField as e:
+            return e.message
+
+        if self._active_clients.search_for_client(public_key) is not None:
+            return "Already in swarm"
+
+        self._active_clients.add_client(
+            ActiveClient(
+                request.remote_addr,
+                public_key
+            )
+        )
+
+    async def find_user(self):
+        post_body = await request.json
+        try:
+            values = self.search_body(post_body, ["public_key"])
+            public_key = values[0]
+        except MissingField as e:
+            return e.message
+
+        client = self._active_clients.search_for_client(public_key)
+        if client is None:
+            return "Public key not active"
+
+    @staticmethod
+    def search_body(body: Optional[Dict[str, Any]], required_keys: List[str]) -> List[Any]:
+        if body is None:
+            raise MissingField(f"Missing request body")
+
+        o = []
+        for rk in required_keys:
+            val = body.get(rk)
+            if val is None:
+                raise MissingField(f"Missing {val}")
+
+            o.append(val)
+
+        return o
+
+    def add_routes(self):
+        self.route("/join", methods=["POST"])(self.join)
+        self.route("/find-user", methods=["GET"])(self.find_user)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    sv = Coordinator("__main__")
+    sv.add_routes()
+    sv.run("0.0.0.0", 80)
