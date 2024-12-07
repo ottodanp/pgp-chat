@@ -24,7 +24,6 @@ class MissingField(Exception):
 class ActiveClient:
     _remote_address: str
     _public_key: str
-    _loop: asyncio.AbstractEventLoop
 
     def __init__(self, remote_address: str, public_key: str):
         self._remote_address = remote_address
