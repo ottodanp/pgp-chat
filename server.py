@@ -1,4 +1,4 @@
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 
 from quart import Quart, request
 
@@ -69,16 +69,16 @@ class Coordinator(Quart):
     def __init__(self, app_name: str):
         super().__init__(app_name)
 
-    async def join(self):
+    async def join(self) -> Tuple[str, int]:
         post_body = await request.json
         try:
             values = self.search_body(post_body, ["public_key"])
             public_key = values[0]
         except MissingField as e:
-            return e.message
+            return e.message, 400
 
         if self._active_clients.search_for_client(public_key) is not None:
-            return "Already in swarm"
+            return "Already in swarm", 400
 
         self._active_clients.add_client(
             ActiveClient(
@@ -87,17 +87,21 @@ class Coordinator(Quart):
             )
         )
 
-    async def find_user(self):
+        return "Joined swarm", 200
+
+    async def find_user(self) -> Tuple[str, int]:
         post_body = await request.json
         try:
             values = self.search_body(post_body, ["public_key"])
             public_key = values[0]
         except MissingField as e:
-            return e.message
+            return e.message, 400
 
         client = self._active_clients.search_for_client(public_key)
         if client is None:
-            return "Public key not active"
+            return "Public key not active", 400
+
+        return client.remote_address, 200
 
     @staticmethod
     def search_body(body: Optional[Dict[str, Any]], required_keys: List[str]) -> List[Any]:

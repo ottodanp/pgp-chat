@@ -1,5 +1,6 @@
 import asyncio
 from typing import List, Optional, Dict
+
 from aiohttp import ClientSession
 
 from crypto import generate_keypair, save_keys, load_keys, keys_exist
@@ -57,7 +58,9 @@ class PGPChat:
 
 
 async def main():
-    chat = PGPChat("Otto")
+    async with ClientSession() as session:
+        chat = PGPChat("Otto", session)
+        await chat.join_swarm()
 
 
 if __name__ == "__main__":
