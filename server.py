@@ -1,6 +1,8 @@
+import asyncio
+import socket
 from typing import List, Optional, Dict, Any, Tuple
 
-from quart import Quart, request
+from quart import Quart, request, jsonify, Response
 
 
 class ClientAlreadyExists(Exception):
@@ -22,14 +24,38 @@ class MissingField(Exception):
 
 class ActiveClient:
     _remote_address: str
+    _listen_port: int
     _public_key: str
 
-    def __init__(self, remote_address: str, public_key: str):
+    def __init__(self, remote_address: str, listen_port: int, public_key: str):
         self._remote_address = remote_address
+        self._listen_port = listen_port
         self._public_key = public_key
 
     def __hash__(self) -> int:
         return hash(self._public_key)
+
+    async def handle_client(self, client):
+        loop = asyncio.get_event_loop()
+        rq = None
+        while rq != 'quit':
+            rq = (await loop.sock_recv(client, 255)).decode('utf8')
+            response = str(eval(rq)) + '\n'
+            await loop.sock_sendall(client, response.encode('utf8'))
+        client.close()
+
+    # port will signify which client is being targeted by the message
+    async def run_server(self):
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.bind(('0.0.0.0', self._listen_port))
+        server.listen(8)
+        server.setblocking(False)
+
+        loop = asyncio.get_event_loop()
+
+        while True:
+            client, _ = await loop.sock_accept(server)
+            await loop.create_task(self.handle_client(client))
 
     @property
     def public_key(self) -> str:
@@ -65,29 +91,45 @@ class ClientList:
 
 class Coordinator(Quart):
     _active_clients: ClientList
+    _port_range: Tuple[int, int]
+    _available_ports: List[int]
 
-    def __init__(self, app_name: str):
+    def __init__(self, app_name: str, port_range: Tuple[int, int] = (5000, 6000)):
+        self._active_clients = ClientList()
+        self._port_range = port_range
+        self._available_ports = list(range(*self._port_range))
         super().__init__(app_name)
 
-    async def join(self) -> Tuple[str, int]:
+    async def join(self) -> Tuple[Response, int]:
         post_body = await request.json
         try:
             values = self.search_body(post_body, ["public_key"])
             public_key = values[0]
         except MissingField as e:
-            return e.message, 400
+            return jsonify({
+                "success": False,
+                "error": e.message
+            }), 400
 
         if self._active_clients.search_for_client(public_key) is not None:
-            return "Already in swarm", 400
+            return jsonify({
+                "success": False,
+                "error": "Client already exists in swarm"
+            }), 400
 
+        listen_port = self._available_ports.pop(0)
         self._active_clients.add_client(
             ActiveClient(
                 request.remote_addr,
+                listen_port,
                 public_key
             )
         )
 
-        return "Joined swarm", 200
+        return jsonify({
+            "success": True,
+            "listen_port": listen_port
+        }), 200
 
     async def find_user(self) -> Tuple[str, int]:
         post_body = await request.json
@@ -112,7 +154,7 @@ class Coordinator(Quart):
         for rk in required_keys:
             val = body.get(rk)
             if val is None:
-                raise MissingField(f"Missing {val}")
+                raise MissingField(f"Missing {rk}")
 
             o.append(val)
 
