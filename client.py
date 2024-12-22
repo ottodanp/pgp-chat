@@ -44,17 +44,27 @@ class PGPChat:
                 self._private_key,
                 local_nickname
             )
-            self._session = session
 
         else:
             self._public_key, self._private_key = load_keys(local_nickname)
 
+        self._session = session
+
     async def join_swarm(self):
-        async with self._session.get(self.format_coordinator_url("join", args={})) as resp:
+        data = {
+            "public_key": self._public_key
+        }
+
+        async with self._session.post(self.format_coordinator_url("join", args={}), json=data) as resp:
             body = await resp.text()
+            print(body, resp.status)
 
     def format_coordinator_url(self, endpoint: str, args: Optional[Dict[str, str]]) -> str:
-        return f"http://{self._coordinator_address}/{endpoint}"
+        qs = "?" + "&".join([f"{k}={v}" for k, v in args.items()])
+        if len(args) == 0:
+            qs = ""
+
+        return f"http://{self._coordinator_address}/{endpoint}{qs}"
 
 
 async def main():

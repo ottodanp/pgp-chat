@@ -52,7 +52,7 @@ class ActiveClient:
         server.setblocking(False)
 
         loop = asyncio.get_event_loop()
-
+        print("running server")
         while True:
             client, _ = await loop.sock_accept(server)
             await loop.create_task(self.handle_client(client))
@@ -64,6 +64,10 @@ class ActiveClient:
     @property
     def remote_address(self) -> str:
         return self._remote_address
+
+    @property
+    def listen_port(self) -> int:
+        return self._listen_port
 
 
 class ClientList:
@@ -93,11 +97,13 @@ class Coordinator(Quart):
     _active_clients: ClientList
     _port_range: Tuple[int, int]
     _available_ports: List[int]
+    _listener_tasks: Optional[asyncio.Queue[asyncio.Task]]
 
     def __init__(self, app_name: str, port_range: Tuple[int, int] = (5000, 6000)):
         self._active_clients = ClientList()
         self._port_range = port_range
         self._available_ports = list(range(*self._port_range))
+        self._listener_tasks = None
         super().__init__(app_name)
 
     async def join(self) -> Tuple[Response, int]:
@@ -111,20 +117,28 @@ class Coordinator(Quart):
                 "error": e.message
             }), 400
 
-        if self._active_clients.search_for_client(public_key) is not None:
+        client = self._active_clients.search_for_client(public_key)
+        if client is not None:
             return jsonify({
                 "success": False,
-                "error": "Client already exists in swarm"
+                "error": "Client already exists in swarm",
+                "listen_port": client.listen_port
             }), 400
 
         listen_port = self._available_ports.pop(0)
-        self._active_clients.add_client(
-            ActiveClient(
+        client = ActiveClient(
                 request.remote_addr,
                 listen_port,
                 public_key
             )
-        )
+
+        listen_task = asyncio.create_task(client.run_server())
+        self._active_clients.add_client(client)
+
+        if self._listener_tasks is None:
+            self._listener_tasks = asyncio.Queue()
+
+        await self._listener_tasks.put(listen_task)
 
         return jsonify({
             "success": True,
