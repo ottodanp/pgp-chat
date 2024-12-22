@@ -1,4 +1,5 @@
 import asyncio
+from os.path import isfile
 from typing import List, Optional, Dict
 
 from aiohttp import ClientSession
@@ -72,7 +73,7 @@ class PGPChat:
             self._listen_port = listen_port
             print(body, resp.status)
 
-    async def client_handshake(self, target_public_key: str):
+    async def client_handshake(self, target_public_key: str, nickname: str) -> Optional[RemoteClient]:
         url = self.format_coordinator_url("find-user", args=None)
 
         async with self._session.post(url, json={"public_key": target_public_key}) as resp:
@@ -80,6 +81,13 @@ class PGPChat:
             print(body)
             if resp.status != 200:
                 return
+
+            remote_address = body.get("remote_address")
+            listen_port = body.get("listen_port")
+            if remote_address is None or listen_port is None:
+                return
+
+            return RemoteClient(nickname, target_public_key, remote_address, listen_port)
 
     async def send_message(self, recipient: RemoteClient, message: str):
         pass
@@ -102,7 +110,22 @@ async def main():
     async with ClientSession() as session:
         chat = PGPChat(input("Enter your nickname: "), session)
         await chat.join_swarm()
-        await chat.client_handshake(chat.public_key)
+        target = input("Enter the local nickname of the user you want to connect to: ")
+        if target is not None and isfile(f"data/friends/{target}.pub"):
+            with open(f"data/friends/{target}.pub", "r") as f:
+                target_public_key = f.read()
+
+        else:
+            print("No public key found for target user")
+            target_pkey_file = input("Enter the path to the public key file: ")
+            with open(target_pkey_file, "r") as f:
+                target_public_key = f.read()
+            target = input("Enter a nickname for the target user: ")
+            with open(f"data/friends/{target}.pub", "w") as f:
+                f.write(target_public_key)
+            print("Public key saved")
+
+        await chat.client_handshake(target_public_key, target)
 
 
 if __name__ == "__main__":
