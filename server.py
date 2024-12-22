@@ -33,7 +33,7 @@ class ActiveClient:
         self._public_key = public_key
 
     def __hash__(self) -> int:
-        return hash(self._public_key)
+        return hash(self._public_key.strip())
 
     async def handle_client(self, client):
         loop = asyncio.get_event_loop()
@@ -83,7 +83,8 @@ class ClientList:
         self._append(client)
 
     def search_for_client(self, public_key: str) -> Optional[ActiveClient]:
-        return self._clients.get(hash(public_key))
+        pkey = public_key.strip()
+        return self._clients.get(hash(pkey))
 
     def _append(self, client: ActiveClient):
         self._clients[hash(client)] = client
@@ -142,22 +143,27 @@ class Coordinator(Quart):
 
         return jsonify({
             "success": True,
+            # messages to this port with a valid public key will be forwarded to this client
             "listen_port": listen_port
         }), 200
 
-    async def find_user(self) -> Tuple[str, int]:
+    async def find_user(self) -> Tuple[Dict[str, Any], int]:
         post_body = await request.json
         try:
             values = self.search_body(post_body, ["public_key"])
             public_key = values[0]
         except MissingField as e:
-            return e.message, 400
+            return {"success": False, "error": e.message}, 400
 
         client = self._active_clients.search_for_client(public_key)
         if client is None:
-            return "Public key not active", 400
+            return {"success": False, "error": "Client not found"}, 404
 
-        return client.remote_address, 200
+        return {
+            "success": True,
+            "remote_address": client.remote_address,
+            "listen_port": client.listen_port
+        }, 200
 
     @staticmethod
     def search_body(body: Optional[Dict[str, Any]], required_keys: List[str]) -> List[Any]:
@@ -176,7 +182,7 @@ class Coordinator(Quart):
 
     def add_routes(self):
         self.route("/join", methods=["POST"])(self.join)
-        self.route("/find-user", methods=["GET"])(self.find_user)
+        self.route("/find-user", methods=["POST"])(self.find_user)
 
 
 if __name__ == "__main__":
