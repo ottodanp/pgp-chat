@@ -1,6 +1,4 @@
-from os import makedirs
-from os.path import exists
-from typing import Tuple, Optional
+from typing import Tuple
 
 import pgpy
 
@@ -35,24 +33,12 @@ def generate_keypair() -> Tuple[str, str]:
     return public_key, private_key
 
 
-def keys_exist(name: str) -> bool:
-    return exists(f"data/keychain/{name}.pri") and exists(f"data/keychain/{name}.pub")
+def verify_signed_message(message: str, signature: str, public_key: str) -> bool:
+    try:
+        key, _ = pgpy.PGPKey.from_blob(public_key)
+        pgp_message = pgpy.PGPMessage.new(message)
+        pgp_signature = pgpy.PGPSignature.from_blob(signature)
 
-
-def save_keys(public_key: str, private_key: str, name: str) -> None:
-    if not exists("data/keychain"):
-        makedirs("data/keychain")
-
-    with open(f"data/keychain/{name}.pub", "w") as pkey_file:
-        pkey_file.write(public_key)
-
-    with open(f"data/keychain/{name}.pri", "w") as privkey_file:
-        privkey_file.write(private_key)
-
-
-def load_keys(name: str) -> Optional[Tuple[str, str]]:
-    if keys_exist(name):
-        with open(f"data/keychain/{name}.pri", "r") as privkey_file:
-            with open(f"data/keychain/{name}.pub", "r") as pubkey_file:
-                return pubkey_file.read(), privkey_file.read()
-
+        return key.verify(pgp_message, pgp_signature)
+    except Exception as e:
+        return False
