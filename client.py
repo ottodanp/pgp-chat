@@ -17,12 +17,19 @@ class ChatClient:
         self._coordinator_port = port
 
     async def connect(self):
-        async with ClientSession() as self._http_session, websockets.connect("") as self._websocket:
+        async with ClientSession() as self._http_session, websockets.connect(
+                self._format_ws_uri(1, "/")) as self._websocket:
             pass
 
     async def test_http(self):
-        async with self._http_session.get(f"http://{self._coordinator_host}:5000/") as response:
+        async with self._http_session.get(self._format_http_uri("/")) as response:
             return await response.text()
+
+    def _format_ws_uri(self, port: int, path: str) -> str:
+        return f"ws://{self._coordinator_host}:{port}/{path}"
+
+    def _format_http_uri(self, path: str) -> str:
+        return f"http://{self._coordinator_host}:{self._coordinator_port}/{path}"
 
 
 async def main():
